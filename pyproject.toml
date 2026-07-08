@@ -1,0 +1,15 @@
+[project]
+name = "mediflow"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "matplotlib>=3.11.0",
+    "numpy>=2.4.6",
+    "opencv-python>=5.0.0.93",
+    "pillow>=12.3.0",
+    "torch>=2.12.1",
+    "torchvision>=0.27.1",
+    "torchxrayvision>=1.5.2",
+]

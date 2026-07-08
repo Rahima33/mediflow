@@ -1,0 +1,16 @@
+{
+  "name": "mediflow-pptx",
+  "private": true,
+  "version": "1.0.0",
+  "type": "commonjs",
+  "scripts": {
+    "build:ppt": "node build_day3_ppt.js"
+  },
+  "dependencies": {
+    "pptxgenjs": "^4.0.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-icons": "^5.5.0",
+    "sharp": "^0.33.5"
+  }
+}
