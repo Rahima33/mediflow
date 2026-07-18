@@ -64,7 +64,8 @@ def _make_samples(root_dir):
 
 
 class MediFlowXrayDataset(Dataset):
-    def __init__(self, root, transform=None, use_lung_crop=True, use_clahe=True):
+    def __init__(self, root, transform=None, use_lung_crop=True, use_clahe=True,
+                 cache_dir=None):
         """
         Args:
             root: path to a folder containing one subfolder per class
@@ -77,40 +78,65 @@ class MediFlowXrayDataset(Dataset):
                        for quick before/after comparisons during
                        experimentation)
             use_clahe: toggle CLAHE on/off, same reasoning
+            cache_dir: if provided, preprocessed images (after lung-crop
+                       + CLAHE, before the torchvision transform) are
+                       saved here on first access and loaded from disk on
+                       every subsequent access. Lung segmentation is a
+                       neural network forward pass, so running it fresh
+                       on every image on every epoch is very slow -- this
+                       cache means the expensive part only ever runs once
+                       per image, not once per epoch. Strongly
+                       recommended whenever use_lung_crop=True.
         """
         self.samples, self.classes, self.class_to_idx = _make_samples(root)
         self.transform = transform
         self.use_lung_crop = use_lung_crop
         self.use_clahe = use_clahe
+        self.cache_dir = cache_dir
+
+        if self.cache_dir:
+            os.makedirs(self.cache_dir, exist_ok=True)
 
     def __len__(self):
         return len(self.samples)
 
-    def __getitem__(self, idx):
-        path, label = self.samples[idx]
+    def _cache_path(self, path):
+        # Build a unique, flat cache filename from the original path so
+        # images from different class subfolders never collide.
+        safe_name = path.replace(os.sep, "__").replace("/", "__")
+        return os.path.join(self.cache_dir, safe_name + ".npy")
 
-        # ---- Load with OpenCV (BGR by default) ----
+    def _preprocess(self, path):
+        """Run lung-crop + CLAHE once, returning an RGB numpy array."""
         image = cv2.imread(path)
 
-        # ---- Step 1: lung-field segmentation ----
-        # Suppresses the mediastinum/heart/spine region that Grad-CAM
-        # showed the model was incorrectly using as a shortcut.
         if self.use_lung_crop:
             image = crop_to_lung_fields(image)
 
-        # ---- Step 2: CLAHE (needs a single-channel grayscale image) ----
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         if self.use_clahe:
             gray = apply_clahe(gray)
 
-        # ---- Convert back to 3 channels ----
-        # DenseNet121 expects 3-channel input (it was pretrained on RGB
+        # DenseNet121 expects 3-channel input (pretrained on RGB
         # ImageNet images), even though X-rays are inherently grayscale.
         # We replicate the single channel across R, G, B.
         rgb = cv2.cvtColor(gray, cv2.COLOR_GRAY2RGB)
+        return rgb
+
+    def __getitem__(self, idx):
+        path, label = self.samples[idx]
+
+        if self.cache_dir:
+            cache_path = self._cache_path(path)
+            if os.path.exists(cache_path):
+                rgb = np.load(cache_path)
+            else:
+                rgb = self._preprocess(path)
+                np.save(cache_path, rgb)
+        else:
+            rgb = self._preprocess(path)
 
         # ---- Hand off to the standard torchvision pipeline ----
-        # PIL.Image is what torchvision transforms expect as input.
         pil_image = Image.fromarray(rgb)
 
         if self.transform:
