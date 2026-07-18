@@ -24,11 +24,18 @@ import torchvision
 import cv2
 import torchxrayvision as xrv
 
+# Run on GPU if available -- this model previously ran silently on CPU
+# even when a GPU was available elsewhere in the pipeline (e.g. for
+# DenseNet121 training), which made per-image lung segmentation roughly
+# an order of magnitude slower than necessary.
+_DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 # Load once, at import time, so repeated calls don't reload the model.
 # Weights are downloaded automatically on first use and cached locally
 # (in ~/.torchxrayvision).
 _seg_model = xrv.baseline_models.chestx_det.PSPNet()
 _seg_model.eval()
+_seg_model.to(_DEVICE)
 
 _LEFT_LUNG_IDX = _seg_model.targets.index("Left Lung")
 _RIGHT_LUNG_IDX = _seg_model.targets.index("Right Lung")
@@ -56,14 +63,14 @@ def get_lung_mask(image_gray, threshold=0.5):
     img = xrv.datasets.normalize(image_gray, 255)  # scale to model's expected range
     img = img[None, ...]  # add channel dim -> [1, H, W]
     img = _transform(img)
-    img_tensor = torch.from_numpy(img).unsqueeze(0).float()  # [1, 1, 512, 512]
+    img_tensor = torch.from_numpy(img).unsqueeze(0).float().to(_DEVICE)  # [1, 1, 512, 512]
 
     with torch.no_grad():
         output = _seg_model(img_tensor)  # [1, 14, 512, 512]
         output = torch.sigmoid(output)   # raw scores -> 0-1 probabilities
 
     lung_prob = output[0, _LEFT_LUNG_IDX] + output[0, _RIGHT_LUNG_IDX]
-    mask = (lung_prob > threshold).numpy().astype(np.uint8) * 255
+    mask = (lung_prob > threshold).cpu().numpy().astype(np.uint8) * 255
     return mask
 
 
@@ -110,7 +117,7 @@ def crop_to_lung_fields(image_bgr_or_gray, dilate_mask_px=10):
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
 
-    IMAGE_PATH = "sample_images/IM-0015-0001.jpeg"  # swap in a real test image
+    IMAGE_PATH = "sample_images/sample_xray.jpg"  # swap in a real test image
 
     original = cv2.imread(IMAGE_PATH)
     original_rgb = cv2.cvtColor(original, cv2.COLOR_BGR2RGB)
