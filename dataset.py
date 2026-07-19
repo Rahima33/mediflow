@@ -65,7 +65,7 @@ def _make_samples(root_dir):
 
 class MediFlowXrayDataset(Dataset):
     def __init__(self, root, transform=None, use_lung_crop=True, use_clahe=True,
-                 cache_dir=None):
+                 cache_dir=None, cache_size=256):
         """
         Args:
             root: path to a folder containing one subfolder per class
@@ -79,7 +79,7 @@ class MediFlowXrayDataset(Dataset):
                        experimentation)
             use_clahe: toggle CLAHE on/off, same reasoning
             cache_dir: if provided, preprocessed images (after lung-crop
-                       + CLAHE, before the torchvision transform) are
+                       + CLAHE, resized to cache_size x cache_size) are
                        saved here on first access and loaded from disk on
                        every subsequent access. Lung segmentation is a
                        neural network forward pass, so running it fresh
@@ -87,12 +87,22 @@ class MediFlowXrayDataset(Dataset):
                        cache means the expensive part only ever runs once
                        per image, not once per epoch. Strongly
                        recommended whenever use_lung_crop=True.
+            cache_size: side length (pixels) to resize to BEFORE caching.
+                       Caching at full original resolution (X-rays are
+                       often 1000-3000px per side) wastes huge amounts of
+                       disk space for no benefit, since the training
+                       pipeline resizes to 224x224 anyway -- this can
+                       fill up disk quotas (e.g. on Kaggle/Colab) after
+                       enough images get cached. 256 gives a small margin
+                       over the typical 224 training size while keeping
+                       cached files small (~30-60x smaller than full-res).
         """
         self.samples, self.classes, self.class_to_idx = _make_samples(root)
         self.transform = transform
         self.use_lung_crop = use_lung_crop
         self.use_clahe = use_clahe
         self.cache_dir = cache_dir
+        self.cache_size = cache_size
 
         if self.cache_dir:
             os.makedirs(self.cache_dir, exist_ok=True)
@@ -107,7 +117,7 @@ class MediFlowXrayDataset(Dataset):
         return os.path.join(self.cache_dir, safe_name + ".npy")
 
     def _preprocess(self, path):
-        """Run lung-crop + CLAHE once, returning an RGB numpy array."""
+        """Run lung-crop + CLAHE, then resize down before returning."""
         image = cv2.imread(path)
 
         if self.use_lung_crop:
@@ -116,6 +126,14 @@ class MediFlowXrayDataset(Dataset):
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         if self.use_clahe:
             gray = apply_clahe(gray)
+
+        # Resize down BEFORE converting to 3-channel / caching. This is
+        # the key fix: caching at full original resolution (often
+        # 1000-3000px) can silently fill up disk quotas after enough
+        # images are cached, since the training pipeline only ever needs
+        # 224x224 anyway. Doing this resize once, here, also makes cache
+        # reads faster (smaller files) on every subsequent epoch.
+        gray = cv2.resize(gray, (self.cache_size, self.cache_size))
 
         # DenseNet121 expects 3-channel input (pretrained on RGB
         # ImageNet images), even though X-rays are inherently grayscale.
@@ -143,37 +161,3 @@ class MediFlowXrayDataset(Dataset):
             pil_image = self.transform(pil_image)
 
         return pil_image, label
-
-
-if __name__ == "__main__":
-    import matplotlib.pyplot as plt
-    from torchvision import transforms
-
-    # Point this at your actual local copy of the Kaggle dataset's
-    # train folder, e.g. a small subset you've copied down for testing.
-    TEST_DIR = "sample_images_by_class"  # expects TEST_DIR/NORMAL, TEST_DIR/PNEUMONIA
-
-    preview_transform = transforms.Compose([
-        transforms.Resize((224, 224)),
-        transforms.ToTensor(),
-    ])
-
-    dataset = MediFlowXrayDataset(root=TEST_DIR, transform=preview_transform)
-
-    print(f"Found {len(dataset)} images across classes: {dataset.classes}")
-    print(f"class_to_idx: {dataset.class_to_idx}")
-
-    # Show the first few images after the full preprocessing pipeline
-    fig, axes = plt.subplots(1, min(4, len(dataset)), figsize=(16, 4))
-    if len(dataset) == 1:
-        axes = [axes]
-
-    for i in range(min(4, len(dataset))):
-        image_tensor, label = dataset[i]
-        image_np = image_tensor.permute(1, 2, 0).numpy()  # CHW -> HWC for matplotlib
-        axes[i].imshow(image_np)
-        axes[i].set_title(dataset.classes[label])
-        axes[i].axis("off")
-
-    plt.tight_layout()
-    plt.show()
