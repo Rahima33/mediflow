@@ -139,7 +139,7 @@ if __name__ == "__main__":
 
     DEVICE = "cpu"
     CHECKPOINT_PATH = "models/best_model_truecrop.pth"
-    IMAGE_PATH = "sample_images/NORMAL2-IM-0198-0001.jpeg"  # swap in a real test image
+    IMAGE_PATH = "sample_images/NORMAL2-IM-0092-0001.jpeg"  # swap in a real test image
     CLASSES = ["NORMAL", "PNEUMONIA"]
 
     model = load_trained_model(CHECKPOINT_PATH, device=DEVICE)

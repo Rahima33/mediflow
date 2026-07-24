@@ -17,6 +17,8 @@ dist/
 .python-version
 .env
 .env.*
+.env
+rag/chroma_db/
 
 # Notebook and Jupyter
 .ipynb_checkpoints/
@@ -41,3 +43,4 @@ coverage/
 *.onnx
 *.ckpt
 models/*.pth
+agent_outputs/
