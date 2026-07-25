@@ -77,7 +77,7 @@ def get_lung_mask(image_gray, threshold=0.5):
     return mask
 
 
-def get_lung_bbox(mask, padding_frac=0.05):
+def get_lung_bbox(mask, padding_frac=0.02):
     """
     Find the bounding box of the (already dilated) lung mask, with a
     small padding margin so we don't cut directly against the lung edge.
@@ -104,7 +104,7 @@ def get_lung_bbox(mask, padding_frac=0.05):
     return x_min, y_min, x_max, y_max
 
 
-def crop_to_lung_fields(image_bgr_or_gray, dilate_mask_px=10, mode="crop", padding_frac=0.05):
+def crop_to_lung_fields(image_bgr_or_gray, dilate_mask_px=10, mode="crop", padding_frac=0.02):
     """
     Restrict the image to the lung-field region using the pretrained
     segmentation mask.
