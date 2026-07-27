@@ -33,7 +33,7 @@ from torch.utils.data import Dataset
 
 from preprocessing.lung import crop_to_lung_fields
 from preprocessing.clahe import apply_clahe
-
+from preprocessing.corners_mask import mask_corners
 
 def _make_samples(root_dir):
     """
@@ -119,7 +119,7 @@ class MediFlowXrayDataset(Dataset):
     def _preprocess(self, path):
         """Run lung-crop + CLAHE, then resize down before returning."""
         image = cv2.imread(path)
-
+        image = mask_corners(image)          # NEW — before segmentation/crop
         if self.use_lung_crop:
             image = crop_to_lung_fields(image)
 
