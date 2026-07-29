@@ -1,8 +1,8 @@
 const stats = [
-  { label: "Test Accuracy", value: "89%" },
-  { label: "Macro F1", value: "0.89" },
-  { label: "NORMAL Recall", value: "84%" },
-  { label: "PNEUMONIA Recall", value: "94%" },
+  { label: "Accuracy", value: "89%" },
+  { label: "Macro F1", value: "0.88" },
+  { label: "NORMAL Recall", value: "86%" },
+  { label: "PNEUMONIA Recall", value: "91%" },
 ];
 
 export default function AboutModel() {
@@ -12,9 +12,9 @@ export default function AboutModel() {
         About the Model
       </h1>
       <p className="text-slate-400 mb-12">
-        DenseNet121, transfer-learned with a frozen backbone, trained on true
-        bounding-box lung crops. This configuration was chosen after
-        controlled comparison against several alternatives — not by default.
+        An xrv-pretrained DenseNet121 backbone, fine-tuned for chest X-ray
+        triage on true bounding-box lung crops. This checkpoint was selected
+        after controlled comparison against several alternatives — not by default.
       </p>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-16">

@@ -1,5 +1,5 @@
 """
-Grad-CAM implementation for MediFlow's DenseNet121 pneumonia classifier.
+Grad-CAM implementation for MediFlow's xrv-pretrained DenseNet121 pneumonia classifier.
 
 Grad-CAM (Gradient-weighted Class Activation Mapping) answers:
 "Which regions of this X-ray most influenced the model's prediction?"
@@ -8,6 +8,14 @@ It works by hooking into the last convolutional layer of the network,
 capturing both its output (activations) during the forward pass and
 its gradients during the backward pass, then combining them into a
 spatial heatmap.
+
+Supports two checkpoint families:
+  - ImageNet-pretrained DenseNet121 (torchvision) -- 3-channel input,
+    ImageNet normalization. Use load_trained_model() / preprocess_image().
+  - torchxrayvision-pretrained DenseNet121 -- single-channel input,
+    xrv's own normalization. Use load_trained_xrv_model() /
+    preprocess_image_xrv(). Different architecture wrapper (XRVClassifier),
+    so state_dicts are NOT interchangeable between the two.
 """
 
 import torch
@@ -16,6 +24,7 @@ import numpy as np
 import cv2
 from PIL import Image
 from torchvision import models, transforms
+import torchxrayvision as xrv
 
 
 class GradCAM:
@@ -54,7 +63,8 @@ class GradCAM:
         Run Grad-CAM on a single preprocessed image tensor.
 
         Args:
-            input_tensor: shape [1, 3, 224, 224], already normalized
+            input_tensor: shape [1, C, 224, 224], already normalized
+                          (C=3 for ImageNet-backbone models, C=1 for xrv)
             class_idx: which class to explain (0=NORMAL, 1=PNEUMONIA).
                        If None, uses the model's own top prediction.
 
@@ -93,6 +103,10 @@ class GradCAM:
         return cam, class_idx, confidence
 
 
+# ==========================
+# ImageNet-backbone models (v2 - v5, partial unfreeze)
+# ==========================
+
 def create_model():
     """Rebuild the DenseNet121 architecture used during training."""
     model = models.densenet121(weights=None)  # we load our own fine-tuned weights
@@ -101,7 +115,7 @@ def create_model():
 
 
 def load_trained_model(checkpoint_path, device="cpu"):
-    """Load the fine-tuned MediFlow checkpoint into a fresh DenseNet121."""
+    """Load a fine-tuned ImageNet-backbone MediFlow checkpoint."""
     model = create_model()
     model.load_state_dict(torch.load(checkpoint_path, map_location=device))
     model.to(device)
@@ -110,7 +124,8 @@ def load_trained_model(checkpoint_path, device="cpu"):
 
 
 def preprocess_image(image_path):
-    """Load an X-ray and prepare it exactly like during training/evaluation."""
+    """Load an X-ray and prepare it exactly like during training/evaluation
+    for ImageNet-backbone models (3-channel, ImageNet normalization)."""
     transform = transforms.Compose([
         transforms.Resize((224, 224)),
         transforms.ToTensor(),
@@ -121,6 +136,50 @@ def preprocess_image(image_path):
     tensor = transform(image).unsqueeze(0)  # add batch dimension -> [1, 3, 224, 224]
     return image, tensor
 
+
+# ==========================
+# torchxrayvision-backbone model (xrv experiment)
+# ==========================
+
+class XRVClassifier(torch.nn.Module):
+    """Must match the training-time class exactly for state_dict to load."""
+    def __init__(self, features):
+        super().__init__()
+        self.features = features
+        self.classifier = torch.nn.Linear(1024, 2)
+
+    def forward(self, x):
+        f = F.relu(self.features(x), inplace=True)
+        f = F.adaptive_avg_pool2d(f, (1, 1)).flatten(1)
+        return self.classifier(f)
+
+
+def load_trained_xrv_model(checkpoint_path, device="cpu"):
+    """Load the xrv-backbone checkpoint (different architecture from create_model())."""
+    base = xrv.models.DenseNet(weights="densenet121-res224-all")
+    model = XRVClassifier(base.features)
+    model.load_state_dict(torch.load(checkpoint_path, map_location=device))
+    model.to(device)
+    model.eval()
+    return model
+
+
+def preprocess_image_xrv(image_path):
+    """
+    Matches xrv_val_transform from training: single-channel, xrv's own
+    normalization -- NOT the 3-channel ImageNet stats preprocess_image() uses.
+    """
+    image = Image.open(image_path).convert("RGB")  # keep original (RGB) for display only
+    gray = np.array(Image.open(image_path).convert("L")).astype(np.float32)
+    gray = xrv.datasets.normalize(gray, 255)
+    gray = xrv.datasets.XRayResizer(224)(gray[None, :, :])
+    tensor = torch.from_numpy(gray).float().unsqueeze(0)  # [1, 1, 224, 224]
+    return image, tensor
+
+
+# ==========================
+# Shared visualization helper
+# ==========================
 
 def overlay_heatmap(original_image, cam, alpha=0.4):
     """Blend the Grad-CAM heatmap on top of the original X-ray."""
@@ -138,11 +197,11 @@ if __name__ == "__main__":
     import matplotlib.pyplot as plt
 
     DEVICE = "cpu"
-    CHECKPOINT_PATH = "models/best_model_truecrop.pth"
-    IMAGE_PATH = "sample_images/NORMAL2-IM-0092-0001.jpeg"  # swap in a real test image
+    CHECKPOINT_PATH = "models/best_model_xrv_backbone.pth"
+    IMAGE_PATH = "sample_images_by_class\\PNEUMONIA\\person500_bacteria_2110.jpeg"  # swap in your known problem image
     CLASSES = ["NORMAL", "PNEUMONIA"]
 
-    model = load_trained_model(CHECKPOINT_PATH, device=DEVICE)
+    model = load_trained_xrv_model(CHECKPOINT_PATH, device=DEVICE)
 
     # DenseNet121's last convolutional layer (still has spatial structure,
     # right before global pooling + the classifier head flattens it away)
@@ -150,7 +209,7 @@ if __name__ == "__main__":
 
     gradcam = GradCAM(model, target_layer)
 
-    original_image, input_tensor = preprocess_image(IMAGE_PATH)
+    original_image, input_tensor = preprocess_image_xrv(IMAGE_PATH)
     cam, predicted_class, confidence = gradcam.generate(input_tensor)
 
     print(f"Predicted: {CLASSES[predicted_class]} ({confidence:.2%} confidence)")

@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 const features = [
   {
     title: "DenseNet121 Classification",
-    desc: "Frozen-backbone CNN, transfer learning, 89% test accuracy on validated chest X-ray data.",
+    desc: "xrv-pretrained DenseNet121 backbone, 89% accuracy and 0.88 macro F1 on validated chest X-ray data.",
   },
   {
     title: "Grad-CAM Explainability",

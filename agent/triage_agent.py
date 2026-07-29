@@ -4,8 +4,9 @@ MediFlow Triage Agent (LangGraph)
 image -> classify -> Grad-CAM -> confidence check -> retrieve guidelines
 -> grade retrieval -> generate report | flag for review
 
-Model: best_model_truecrop.pth -- frozen DenseNet121, true bounding-box
-lung crops, no CLAHE. 84% NORMAL recall, 0.89 macro-F1.
+Model: best_model_xrv_backbone.pth -- xrv-pretrained DenseNet121,
+true bounding-box lung crops, no CLAHE. 86% NORMAL recall,
+91% PNEUMONIA recall, 89% accuracy, 0.88 macro-F1.
 """
 
 import os
@@ -18,7 +19,11 @@ import torch
 from PIL import Image
 from pydantic import BaseModel, Field
 from langgraph.graph import StateGraph, END
-from langchain_groq import ChatGroq
+
+try:
+    from langchain_groq import ChatGroq
+except Exception:  # pragma: no cover - optional dependency path
+    ChatGroq = None
 
 from gradcam.gradcam import (
     GradCAM,
@@ -32,7 +37,7 @@ from rag.retriever import retrieve_guidelines
 # Config
 # ==========================
 
-CHECKPOINT_PATH = "models/best_model_truecrop.pth"
+CHECKPOINT_PATH = "models\\best_model_xrv_backbone.pth"
 DEVICE = "cpu"
 CLASSES = ["NORMAL", "PNEUMONIA"]
 CONFIDENCE_THRESHOLD = 0.75
@@ -44,7 +49,21 @@ RETRIEVAL_QUERIES = {
     "PNEUMONIA": "pediatric community-acquired pneumonia diagnosis chest x-ray findings management",
 }
 
-_llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0)
+def _build_llm():
+    if ChatGroq is None:
+        return None
+
+    api_key = os.getenv("GROQ_API_KEY")
+    if not api_key:
+        return None
+
+    try:
+        return ChatGroq(model="llama-3.3-70b-versatile", temperature=0, api_key=api_key)
+    except Exception:
+        return None
+
+
+_llm = _build_llm()
 
 
 class RetrievalGrade(BaseModel):
@@ -63,8 +82,12 @@ class TriageReport(BaseModel):
     disclaimer: str = Field(description="Standard AI-assisted tool disclaimer")
 
 
-_grading_llm = _llm.with_structured_output(RetrievalGrade)
-_report_llm = _llm.with_structured_output(TriageReport)
+if _llm is None:
+    _grading_llm = None
+    _report_llm = None
+else:
+    _grading_llm = _llm.with_structured_output(RetrievalGrade)
+    _report_llm = _llm.with_structured_output(TriageReport)
 
 
 # ==========================
@@ -80,7 +103,10 @@ class TriageState(TypedDict):
     retrieved_chunks: list
     retrieval_sufficient: bool
     retrieval_reasoning: str
-    status: str
+    finding: str
+    clinical_context: str
+    next_steps: str
+    disclaimer: str
 
 
 # ==========================
@@ -119,12 +145,12 @@ def check_confidence(state: TriageState) -> dict:
 
 
 def flag_for_review(state: TriageState) -> dict:
-    status = (
-        f"FLAGGED FOR REVIEW: {state['prediction']} predicted at "
-        f"{state['confidence']:.1%} confidence (below "
-        f"{CONFIDENCE_THRESHOLD:.0%} threshold). Recommend radiologist review."
-    )
-    return {"status": status}
+    return {
+        "finding": f"{state['prediction']} predicted at {state['confidence']:.1%} confidence.",
+        "clinical_context": "Confidence below review threshold -- not evaluated against guidelines.",
+        "next_steps": "Recommend radiologist review.",
+        "disclaimer": "This case requires clinician review before any interpretation.",
+    }
 
 
 def retrieve_guidelines_node(state: TriageState) -> dict:
@@ -140,16 +166,22 @@ def grade_retrieval(state: TriageState) -> dict:
     )
 
     prompt = (
-        f"Chest X-ray triage result: {state['prediction']} "
+        f"A chest X-ray triage system predicted: {state['prediction']} "
         f"(confidence: {state['confidence']:.1%}).\n\n"
-        f"Write 'finding' as a radiology-style findings statement (like: "
-        f"'No evidence of consolidation, effusion, or pneumothorax. Cardiac "
-        f"silhouette and mediastinum within normal limits.') -- do NOT "
-        f"discuss the AI tool, guideline citations, or imaging modality "
-        f"comparisons in this field.\n\n"
-        f"Use the retrieved context below ONLY for 'clinical_context' "
-        f"(brief, 1-2 sentences, cite source) and 'recommended_next_steps'.\n\n"
-        f"Retrieved context:\n{chunks_text}")
+        f"The following chunks were retrieved from a clinical guideline "
+        f"knowledge base to help ground a report about this case:\n\n"
+        f"{chunks_text}\n\n"
+        f"Judge whether these chunks contain genuinely relevant, "
+        f"substantive clinical guidance usable for writing a grounded "
+        f"report about this case -- not just topically-adjacent text, "
+        f"reference lists, citations, or administrative content."
+    )
+
+    if _grading_llm is None:
+        return {
+            "retrieval_sufficient": True,
+            "retrieval_reasoning": "No Groq API key configured; using fallback retrieval grading.",
+        }
 
     grade: RetrievalGrade = _grading_llm.invoke(prompt)
     return {
@@ -159,14 +191,14 @@ def grade_retrieval(state: TriageState) -> dict:
 
 
 def flag_insufficient_context(state: TriageState) -> dict:
-    status = (
-        f"FLAGGED - INSUFFICIENT CONTEXT: {state['prediction']} predicted "
-        f"at {state['confidence']:.1%} confidence, but retrieved guideline "
-        f"content was judged insufficient to ground a report. "
-        f"Reasoning: {state['retrieval_reasoning']} "
-        f"Recommend radiologist review."
-    )
-    return {"status": status}
+    return {
+        "finding": f"{state['prediction']} predicted at {state['confidence']:.1%} confidence.",
+        "clinical_context": (
+            f"Retrieved guideline content insufficient: {state['retrieval_reasoning']}"
+        ),
+        "next_steps": "Recommend radiologist review.",
+        "disclaimer": "This case requires clinician review before any interpretation.",
+    }
 
 
 def generate_report(state: TriageState) -> dict:
@@ -203,16 +235,21 @@ def generate_report(state: TriageState) -> dict:
     f"Retrieved context:\n{chunks_text}"
 )
 
-    report: TriageReport = _report_llm.invoke(prompt)
+    if _report_llm is None:
+        return {
+            "finding": f"{state['prediction']} predicted with {state['confidence']:.1%} confidence.",
+            "clinical_context": "Groq API key not configured; using fallback report generation.",
+            "next_steps": "Recommend clinician review.",
+            "disclaimer": "This is an AI-assisted screening tool, not a diagnosis, and clinician review is required.",
+        }
 
-    status = (
-        f"REPORT GENERATED\n"
-        f"Finding: {report.finding}\n"
-        f"Clinical Context: {report.clinical_context}\n"
-        f"Next Steps: {report.recommended_next_steps}\n"
-        f"Disclaimer: {report.disclaimer}"
-    )
-    return {"status": status}
+    report: TriageReport = _report_llm.invoke(prompt)
+    return {
+        "finding": report.finding,
+        "clinical_context": report.clinical_context,
+        "next_steps": report.recommended_next_steps,
+        "disclaimer": report.disclaimer,
+    }
 
 
 # ==========================
@@ -286,4 +323,7 @@ if __name__ == "__main__":
     print(f"Confidence     : {result['confidence']:.2%}")
     print(f"Needs review   : {result['needs_review']}")
     print(f"Grad-CAM saved : {result['gradcam_path']}")
-    print(f"Status         : {result['status']}")
+    print(f"Finding        : {result['finding']}")
+    print(f"Clinical ctx   : {result['clinical_context']}")
+    print(f"Next steps     : {result['next_steps']}")
+    print(f"Disclaimer     : {result['disclaimer']}")

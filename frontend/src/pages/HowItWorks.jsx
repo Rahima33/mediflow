@@ -9,7 +9,7 @@ const steps = [
   },
   {
     title: "DenseNet121 Classification",
-    desc: "A frozen-backbone CNN, transfer-learned from ImageNet, predicts NORMAL or PNEUMONIA with a confidence score.",
+    desc: "An xrv-pretrained DenseNet121 backbone predicts NORMAL or PNEUMONIA with a confidence score and 89% accuracy.",
   },
   {
     title: "Grad-CAM Explainability",
