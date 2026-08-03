@@ -27,8 +27,8 @@ except Exception:  # pragma: no cover - optional dependency path
 
 from gradcam.gradcam import (
     GradCAM,
-    load_trained_model,
-    preprocess_image,
+    load_trained_xrv_model,
+    preprocess_image_xrv,
     overlay_heatmap,
 )
 from rag.retriever import retrieve_guidelines
@@ -37,7 +37,7 @@ from rag.retriever import retrieve_guidelines
 # Config
 # ==========================
 
-CHECKPOINT_PATH = "models\\best_model_xrv_backbone.pth"
+CHECKPOINT_PATH = os.path.join("models", "best_model_xrv_backbone.pth")
 DEVICE = "cpu"
 CLASSES = ["NORMAL", "PNEUMONIA"]
 CONFIDENCE_THRESHOLD = 0.75
@@ -113,7 +113,7 @@ class TriageState(TypedDict):
 # Model loading (once, at import time)
 # ==========================
 
-_model = load_trained_model(CHECKPOINT_PATH, device=DEVICE)
+_model = load_trained_xrv_model(CHECKPOINT_PATH, device=DEVICE)
 _target_layer = _model.features.norm5
 _gradcam = GradCAM(_model, _target_layer)
 
@@ -123,7 +123,7 @@ _gradcam = GradCAM(_model, _target_layer)
 # ==========================
 
 def load_and_classify(state: TriageState) -> dict:
-    original_image, input_tensor = preprocess_image(state["image_path"])
+    original_image, input_tensor = preprocess_image_xrv(state["image_path"])
     cam, predicted_class, confidence = _gradcam.generate(input_tensor)
 
     os.makedirs(GRADCAM_OUTPUT_DIR, exist_ok=True)

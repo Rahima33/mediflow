@@ -12,9 +12,10 @@ export default function AboutModel() {
         About the Model
       </h1>
       <p className="text-slate-400 mb-12">
-        An xrv-pretrained DenseNet121 backbone, fine-tuned for chest X-ray
-        triage on true bounding-box lung crops. This checkpoint was selected
-        after controlled comparison against several alternatives — not by default.
+        The deployed checkpoint is best_model_xrv_backbone.pth: an
+        X-ray-pretrained DenseNet121 backbone from torchxrayvision, fine-tuned
+        for binary chest X-ray triage on true bounding-box lung crops. It uses
+        single-channel XRV normalization in the live API path.
       </p>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-16">
@@ -39,30 +40,36 @@ export default function AboutModel() {
           default due to class imbalance.
         </li>
         <li>
-          A frozen backbone outperformed the standard freeze-then-unfreeze
-          fine-tuning strategy on this dataset size — likely because a
-          shared learning rate across an unfrozen backbone caused
-          catastrophic forgetting of useful pretrained features.
+          A frozen ImageNet-pretrained backbone outperformed a standard
+          freeze-then-unfreeze strategy on this dataset size, likely because a
+          shared learning rate across an unfrozen backbone caused catastrophic
+          forgetting of useful pretrained features.
         </li>
         <li>
-          Grad-CAM analysis revealed the model relying on chest-wall and
-          shoulder regions rather than lung tissue on several misclassified
-          cases — a shortcut-learning failure mode, not visible from
+          Grad-CAM analysis revealed shortcut learning in ImageNet-backbone
+          runs: several misclassified cases relied on chest-wall and shoulder
+          regions rather than lung tissue, a failure mode not visible from
           accuracy alone.
         </li>
         <li>
-          Cropping the image to a true lung-field bounding box (rather than
-          masking non-lung pixels to black) measurably reduced this bias and
-          improved every reported metric.
+          True lung-field bounding-box crops reduced peripheral bias more
+          effectively than masking non-lung pixels to black, and improved the
+          reported validation metrics.
+        </li>
+        <li>
+          One persistent false-positive case still showed peripheral attention
+          after true-crop preprocessing. Switching from an ImageNet backbone to
+          an X-ray-pretrained torchxrayvision DenseNet121 resolved that case,
+          indicating the shortcut came from the natural-image backbone rather
+          than the crop pipeline.
         </li>
       </ul>
 
       <h2 className="text-xl font-semibold mb-3">Known limitations</h2>
       <ul className="text-slate-400 text-sm space-y-3 list-disc pl-5">
         <li>
-          Peripheral-attention bias was reduced, not eliminated — at least
-          one recurring case still shows partial reliance on non-lung
-          regions.
+          The XRV backbone resolved the previously audited shortcut-attention
+          examples, but the full test set still needs a complete Grad-CAM audit.
         </li>
         <li>
           Trained on a public binary pneumonia dataset, not a clinically
