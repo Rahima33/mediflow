@@ -43,4 +43,5 @@ coverage/
 *.onnx
 *.ckpt
 models/*.pth
+!models/best_model_xrv_backbone.pth
 agent_outputs/

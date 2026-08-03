@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: mediflow-api
+    runtime: python
+    buildCommand: uv sync --frozen && uv run python -m rag.build_knowledge_base
+    startCommand: uv run uvicorn api.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11
+      - key: GROQ_API_KEY
+        sync: false
+      - key: FRONTEND_ORIGINS
+        sync: false
